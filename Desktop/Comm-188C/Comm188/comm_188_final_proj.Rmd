@@ -1,0 +1,143 @@
+---
+title: "comm188_final_proj"
+author: "Daniel Varivoda 204755697"
+date: "5/24/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Final project
+
+Cleaning the Data:
+
+```{r}
+library(stringr)
+tweets <- read.csv("merged_tweetIDs.csv")
+
+#removing all non english tweets
+tweets <- tweets[tweets$lang == "en",]
+tweets$text <- as.character(tweets$text)
+head(tweets)
+tweets$text[4]
+tweets2 <- tweets
+tweets <-  tweets[!str_detect(tweets$text,"RT.*"),]
+nrow(tweets)
+head(tweets2,20)
+
+#removing all non ASCII characters
+
+for(i in 1:nrow(tweets)){
+  tweets$text[i] <- gsub("[^\x01-\x7F]", "", tweets$text[i])
+}
+
+head(tweets$text)
+
+#removing URLS
+library(qdapRegex)
+tweets$text <- rm_url(tweets$text, pattern=pastex("@rm_twitter_url", "@rm_url"))
+```
+
+
+# Calculating Flesch Reading Scores
+```{r}
+#function to take out the empty whitespace in words vector
+keep_words <- function(words){
+  words[nchar(words) > 0]
+}
+
+#check if theres a special syllable ending
+is_special_ending <- function(ending) {
+  is_es <- all(ending == c("e", "s"))
+  is_ed <- all(ending == c("e", "d"))
+  is_e_not_le <- ending[2] == "e" & ending[1] != "l"
+  is_es | is_ed | is_e_not_le
+}
+
+#check if there is a special ending in the word
+rm_special_endings <- function(word_letters) {
+    word_tail <- tail(word_letters, n = 2)
+    if (is_special_ending(word_tail)) {
+      if (word_tail[2] == "e") {
+        word_letters[-length(word_letters)]
+      } else {
+        head(word_letters, n = -2)
+    }
+  } else {
+    word_letters
+    }
+}
+
+#count the number of syllables
+count_syllables <- function(word) {
+  word_letters <- unlist(strsplit(word, split = ""))
+  if (length(word_letters) <= 3) {
+    1
+  } else {
+  word_letters <- rm_special_endings(word_letters)
+  word_vowels <- is_vowel(word_letters)
+  sum(word_vowels) - sum(diff(which(word_vowels)) == 1)
+  }
+}
+
+#check if the letter is a vowel
+is_vowel <- function(letter) {
+  letter %in% c("a", "e", "i", "o", "u", "y")
+}
+
+
+#Function to actually calculate the Flesch Reading Ease Score --> For the purposes of tweets, I counted each as one sentence, just as in the paper we are basing our Flesch Reading Ease Formula on
+reading_ease <- function(passage)
+{
+  paste(passage, collapse = " ")
+  
+  #split the passage into sentences, put in lower case,
+  #and remove punctuation
+  sentences <- passage
+  sentences <- tolower(sentences)
+  sentences <- gsub(pattern = "[[:punct:]]", replacement = "", sentences)
+  sent_tot <- 1
+  
+  #split the sentences into words
+  words <- strsplit(sentences, split = " ")
+  words <- lapply(words, keep_words)
+  words <- unname(unlist(words))
+  words_tot <- length(words)
+  
+  syl_num <- 0
+  
+  #count the number of syllables in each word
+  for(i in words) {
+    syl_num <- syl_num + count_syllables(i)
+  }
+
+  RE <- 206.835 - (1.015 * (words_tot)) - (84.6 * (syl_num / words_tot))
+  RE
+}
+```
+
+
+```{r}
+#calculating the flesch reading ease score for each tweet
+flesch <- c()
+for(i in 1:nrow(tweets)){
+  f <- reading_ease(tweets$text[i])
+  flesch <- c(flesch, f)
+}
+length(flesch)
+
+tweets <- cbind(flesch, tweets)
+```
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
