@@ -1,0 +1,417 @@
+---
+title: "comm188_final_proj"
+author: "Daniel Varivoda 204755697"
+date: "5/24/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Final project
+
+Cleaning the Data:
+
+```{r}
+library(tm)
+library(stringr)
+tweets <- read.csv("merged_tweetIDs.csv")
+tweets <- tweets[,c(6,7,11,18,28)]
+
+nrow(tweets)
+#removing all non english tweets
+tweets <- tweets[tweets$lang == "en",]
+tweets$text <- as.character(tweets$text)
+tweets$user_location <- as.character(tweets$user_location)
+tweets2 <- tweets
+
+
+#removing all non ASCII characters
+for(i in 1:nrow(tweets)){
+  tweets$text[i] <- gsub("[^\x01-\x7F]", "", tweets$text[i])
+  tweets$user_location[i] <- gsub("[^\x01-\x7F]", "", tweets$user_location[i])
+}
+
+head(tweets$text)
+
+#removing URLS
+library(qdapRegex)
+tweets$text <- rm_url(tweets$text, pattern=pastex("@rm_twitter_url", "@rm_url"))
+head(tweets)
+
+
+#removing the retweet from the text
+for(i in 1:nrow(tweets)){
+  if(str_detect(tweets$text[i], "RT @.*? "))
+  tweets$text[i] <- removeWords(tweets$text[i], "RT @.*? ")
+}
+
+
+head(tweets)
+
+```
+
+
+# Calculating Flesch Reading Scores
+```{r}
+#function to take out the empty whitespace in words vector
+keep_words <- function(words){
+  words[nchar(words) > 0]
+}
+
+#check if theres a special syllable ending
+is_special_ending <- function(ending) {
+  is_es <- all(ending == c("e", "s"))
+  is_ed <- all(ending == c("e", "d"))
+  is_e_not_le <- ending[2] == "e" & ending[1] != "l"
+  is_es | is_ed | is_e_not_le
+}
+
+#check if there is a special ending in the word
+rm_special_endings <- function(word_letters) {
+    word_tail <- tail(word_letters, n = 2)
+    if (is_special_ending(word_tail)) {
+      if (word_tail[2] == "e") {
+        word_letters[-length(word_letters)]
+      } else {
+        head(word_letters, n = -2)
+    }
+  } else {
+    word_letters
+    }
+}
+
+#count the number of syllables
+count_syllables <- function(word) {
+  word_letters <- unlist(strsplit(word, split = ""))
+  if (length(word_letters) <= 3) {
+    1
+  } else {
+  word_letters <- rm_special_endings(word_letters)
+  word_vowels <- is_vowel(word_letters)
+  sum(word_vowels) - sum(diff(which(word_vowels)) == 1)
+  }
+}
+
+#check if the letter is a vowel
+is_vowel <- function(letter) {
+  letter %in% c("a", "e", "i", "o", "u", "y")
+}
+
+
+#Function to actually calculate the Flesch Reading Ease Score --> For the purposes of tweets, I counted each as one sentence, just as in the paper we are basing our Flesch Reading Ease Formula on
+reading_ease <- function(passage)
+{
+  paste(passage, collapse = " ")
+  
+  #split the passage into sentences, put in lower case,
+  #and remove punctuation
+  sentences <- passage
+  sentences <- tolower(sentences)
+  sentences <- gsub(pattern = "[[:punct:]]", replacement = "", sentences)
+  sent_tot <- 1
+  
+  #split the sentences into words
+  words <- strsplit(sentences, split = " ")
+  words <- lapply(words, keep_words)
+  words <- unname(unlist(words))
+  words_tot <- length(words)
+  
+  syl_num <- 0
+  
+  #count the number of syllables in each word
+  for(i in words) {
+    syl_num <- syl_num + count_syllables(i)
+  }
+
+  RE <- 206.835 - (1.015 * (words_tot)) - (84.6 * (syl_num / words_tot))
+  RE
+}
+```
+
+
+```{r}
+#calculating the flesch reading ease score for each tweet
+flesch <- c()
+for(i in 1:nrow(tweets)){
+  f <- reading_ease(tweets$text[i])
+  flesch <- c(flesch, f)
+}
+length(flesch)
+
+tweets <- cbind(flesch, tweets)
+head(tweets)
+```
+# Getting the states in order to sort tweets by location
+```{r}
+states <- read.csv("states.csv", stringsAsFactors = FALSE)
+tweets$user_location <- as.character(tweets$user_location)
+
+states$Code <- paste(" ", states$Code, " ", sep = "")   
+
+ 
+# In order to get only tweets by state I selected for any location that either includes a state name or abbreviation
+is_state <- c()
+state_num <- c()
+issue <- c()
+for(i in 1:nrow(tweets)){
+  check <-  FALSE
+  name <- integer(0)
+  abv <- integer(0)
+  if(any(str_detect(tweets$user_location[i], states$Code))||
+     any(str_detect(tweets$user_location[i], states$Name))){
+    is_state <- c(is_state, TRUE)
+    check <- TRUE
+  } else {is_state <- c(is_state, FALSE) }
+  if(check){
+    abv <- which(str_detect(tweets$user_location[i], states$Code))
+    name <- which(str_detect(tweets$user_location[i], states$Name))
+    # if(str_detect(tweets$user_location[i], "West Virginia")){
+    #   name <- 48
+    # } else if(str_detect(tweets$user_location[i], "Southern West Virginia")){
+    # name <- 48
+    #} else if(str_detect(tweets$user_location[i], "Arkansas")){
+    #   name <- 4
+    # }
+  }
+  
+  if(length(abv) > 1 || length(name) > 1){
+    issue <- c(issue,i)
+    if(length(abv) >1){
+      name <- abv
+    }
+    if(sum(name) == 63){
+      name <- 35
+    } else if(sum(name) == 20){
+      name <- 4
+    } else if(sum(name) == 94){
+      name <- 48
+    } else if(sum(name) == 79){
+      name <- 47
+    } else if(sum(name) == 49){
+      name <- 6
+    } else if(sum(name) == 80){
+      name <- 36
+    } else if(sum(name) == 39){
+      name <- 7
+    } else if(sum(name) == 19){
+      name <- 1
+    } else if(sum(name) == 51){
+      name <- 18
+    } else if(sum(name) == 35){
+      name <- 22
+    } else if(name[1] == 5 && name[2] == 27){
+      name <- 27
+    } else if(sum(name) == 33){
+      name <- 5
+    } else if(sum(name) == 79){
+      name <- 32
+    } else if(sum(name) == 16){
+      name <- 11
+    } else if(sum(name) == 21){
+      name <- 9
+    } else if(sum(name) == 64){
+      name <- 42
+    } else if(sum(name) == 53){
+      name <- 25
+    } else if(sum(name) == 41){
+      name <- 25
+    } else if(sum(name) == 65){
+      name <- 33
+    } else if(sum(name) == 22){
+      name <- 17
+    } else if(sum(name) == 11){
+      name <- 10
+    } 
+  }
+  if(check == FALSE){
+    state_num <- c(state_num, NA)
+  } else if(length(name) > 0){
+    state_num <- c(state_num, name)
+  } else if(length(abv) > 0){
+    state_num <- c(state_num, abv)
+  } else { print(i)}
+}
+
+#Finding places where two names are dteected and changing above
+#code has been commented out after being implemented to fix issues above
+# for(i in 1:length(issue)){
+# print(sum(which(str_detect(tweets$user_location[issue[i]], states$Code))))
+# print(sum(which(str_detect(tweets$user_location[issue[i]], states$Name))))
+# print(which(str_detect(tweets$user_location[issue[i]], states$Name)))
+# print(which(str_detect(tweets$user_location[issue[i]], states$Code)))
+# print(tweets$user_location[issue[i]])
+# if(length(which(str_detect(tweets$user_location[issue[i]], states$Name))) > 0){
+#   print(states$Name[which(str_detect(tweets$user_location[issue[i]], states$Name))])
+# } else{
+#   print(states$Name[which(str_detect(tweets$user_location[issue[i]], states$Code))])
+# }
+# print("*************************")
+# }
+```
+
+
+```{r}
+
+tweets <- cbind(is_state, state_num, tweets)
+
+#only keeping tweets with identified states
+tweets <- tweets[tweets$is_state == TRUE,]
+nrow(tweets)
+
+c_t <- tweets[,-1]
+
+#generating a frequency table of every word in the twitter dictionary
+words <- c()
+for(i in 1:nrow(c_t)){
+  txt <- c_t$text[i]
+  #removing punctuation from words
+  txt <-   gsub('[[:punct:] ]+',' ',txt)
+  #splitting string into a vector
+  words <- c(words, unlist(strsplit(txt, " ")))
+}
+
+#creating a frequency table of words
+freq <- as.data.frame(table(words))
+freq <- freq[order(freq$Freq, decreasing = T),]
+head(freq,20)
+#looking at frequency of words and creating a small dictionary in order to sort
+big_deal <- c("pandemic", "outbreak", "epidemic", "crisis", "global", "death", "infected", "quarantine", "lockdown", "bad", "dead", "dangerous", "deadly", "emergency", "serious", "spreading", "killed", "ban", "Pandemic", "not good")
+
+not_big_deal <- c("down", "flu", "fine", "support", "control", "vaccine", "nothing", "hoax","free", "clear", "Dems", "open", "propaganda", "safe", "healthy", "MAGA", "healthier", "fake news")
+```
+
+```{r}
+#adding the state name + other demographics to help with regression
+states2 <- states[c(1,6,9,11)]
+temp <- states2[c_t$state_num[1],]
+for(i in 2:nrow(c_t)){
+  temp <- rbind(temp, states2[c_t$state_num[i],])
+}
+head(tweets)
+
+c_t <- cbind(temp, c_t)
+#coronavirus case date from https://data.cdc.gov/NCHS/Provisional-COVID-19-Death-Counts-by-Week-Ending-D/r8kw-7aab
+# combining all weekly deaths for march
+library(dplyr)
+deaths <- read.csv("covid_deaths_by_week_per_states.csv")
+deaths <- deaths[!is.na(deaths$COVID.19.Deaths),]
+state_covid_deaths <- deaths %>% group_by(State) %>% summarise("march_flu_covid_pneumonia_deaths" = sum(COVID.19.Deaths
+))
+state_covid_deaths$State <- as.character(state_covid_deaths$State)
+
+c_t <- c_t %>% left_join(state_covid_deaths, by = c("Name" = "State"))
+
+c_t <- c_t %>%
+  select(march_flu_covid_pneumonia_deaths, everything())
+colnames(c_t)[1] <- "total_march_covid_deaths"
+
+head(c_t)
+write.csv(c_t, "cleaned_tweets_and_joined_data.csv", row.names = FALSE)
+```
+
+```{r}
+#using my dictionary for worried/not worried about covid to analyze sentiment by counting number of common words that indicating that coronavirus is threatening and assigning one positive point for each and same for not threatening but giving each a negative point. I then take the sum to ge the sentiment for each tweet
+sentiment <- c()
+for(i in 1:nrow(c_t)){
+  mytxt <- c_t$text[i]
+  neg <- -1*sum(str_count(mytxt, not_big_deal))
+  pos <- sum(str_count(mytxt, big_deal))
+  tmp <- neg + pos
+  sentiment <- c(sentiment, tmp)
+}
+c_t <- cbind(sentiment, c_t)
+
+head(c_t)
+```
+
+```{r}
+
+#changing the columns to numbers from chars
+for(i in 1:nrow(c_t)){
+  four <- c_t$Population[i]
+  five <- c_t$Land.area.mi.2.[i]
+  six <- c_t$Water.area.mi.2.[i]
+  four <-   gsub('[[:punct:] ]+','',four)
+  c_t$Population[i] <- as.numeric(four)
+  five <-   gsub('[[:punct:] ]+','',five)
+  c_t$Land.area.mi.2.[i] <- as.numeric(five)
+  six <-   gsub('[[:punct:] ]+','',six)
+  c_t$Water.area.mi.2.[i] <- as.numeric(six)
+}
+c_t[,4] <- as.numeric(c_t[,4])
+c_t[,5] <- as.numeric(c_t[,5])
+c_t[,6] <- as.numeric(c_t[,6])
+```
+
+```{r}
+library(alr3)
+
+# Seems like Flesch Reading Score or Sentiment have no correlation to March Covid Deaths by State
+
+#The model is not valid however power transformations inorder to attempt to create a valid model will destroy any ability to interpret the model, so it is left as is (This is because a power transformation requires strictly positive ranges and changing the ranges so they are positive will destroy any interpretability). 
+fleschlm <- lm(total_march_covid_deaths ~ flesch + sentiment + Land.area.mi.2. + Water.area.mi.2. + Population, c_t)
+plot(fleschlm)
+mmps(fleschlm)
+summary(fleschlm)
+anova(fleschlm)
+
+
+#Trying some minor changes in order to attempt at improving model, which does improve accuracy somewhat
+#The data seems to be too clustered to come to any proper conclusions using this model as it does not allow for a proper normal distirbution
+fleschlm <- lm(total_march_covid_deaths ~ flesch + sentiment + Land.area.mi.2. + Water.area.mi.2. + Population + num_Airports, c_t)
+plot(fleschlm)
+mmps(fleschlm)
+summary(fleschlm)
+anova(fleschlm)
+
+
+
+#Checking the actual variable correlations --> Since our model isn't the best we can try to check direct correlations between the variables
+#Theres seems to be almost no correlation between either of the variables and number of covid deaths
+cor(c_t$total_march_covid_deaths, c_t$sentiment)
+plot(total_march_covid_deaths ~ sentiment, c_t)
+cor(c_t$total_march_covid_deaths, c_t$flesch)
+plot(total_march_covid_deaths ~ flesch,c_t)
+#no correlation between our 2 predictors either
+cor(c_t$flesch, c_t$sentiment)
+
+#no correlation between clesch and favorite count or sentiment
+cor(c_t$favorite_count, c_t$flesch)
+cor(c_t$favorite_count, c_t$sentiment)
+
+#adding airports as a predictor
+airports <- read.csv("airports.csv", stringsAsFactors = F)
+airports <- airports[,1:2]
+c_t$Name <- toupper(c_t$Name)
+
+c_t <- c_t %>% left_join(airports, by = c("Name" = "State"))
+c_t <- c_t %>%
+  select(num_Airports, everything())
+
+# Number of airports also fails to be an accurate predictor of Covid Deaths.
+# Our best predictors for number of Covid Deaths in a state are the population, land area, and water area of said state
+fleschlm2 <- lm(sqrt(total_march_covid_deaths) ~ flesch + sentiment + num_Airports + Land.area.mi.2. + Water.area.mi.2. + Population, c_t)
+summary(fleschlm2)
+anova(fleschlm2)
+plot(total_march_covid_deaths ~ num_Airports, c_t )
+library(alr3)
+c_t$total_march_covid_deaths <- c_t$total_march_covid_deaths + 1
+inv.res.plot(lm((total_march_covid_deaths) ~ Land.area.mi.2. + Water.area.mi.2. + Population + num_Airports, c_t))
+# This model seems to be the best predictor of Covid Cases we have as it explains ~48% of the variability in the data. While taking y to the power of 1/4 does fix the residual plot for the model suggesting that the trend is linear unlike in the other models, there are still issues in both the qq and scale-location plots suggesting that there are issues wit the data. It seems both normality andcosntant variance in our samples has failed, which could be due to bias in which states are represented on twitter the most.
+library(leaps)
+step <- regsubsets((total_march_covid_deaths)^(1/4) ~ flesch + sentiment + Land.area.mi.2. + Water.area.mi.2. + Population + num_Airports, c_t, nvmax = 6)
+
+bic <- summary(step)$bic
+which(bic == min(bic))
+
+summary(step)
+
+pl(lm((total_march_covid_deaths) ~ Land.area.mi.2. + Water.area.mi.2. + Population + num_Airports, c_t))
+plot(lm((total_march_covid_deaths)^(1/4) ~ Land.area.mi.2. + Water.area.mi.2. + Population + num_Airports, c_t))
+mmps(lm((total_march_covid_deaths)^(1/4) ~ Land.area.mi.2. + Water.area.mi.2. + Population + num_Airports, c_t))
+```
+
+
+
